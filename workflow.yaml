@@ -1,0 +1,61 @@
+main:
+  params: [args]
+  steps:
+
+    # 1. Start: receive request_id from Pub/Sub trigger or direct call
+    - init:
+        assign:
+          - request_id: ${args.request_id}
+          - project_id: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
+          - coordination_agent_url: ${args.coordination_agent_url}
+
+    # 2. Call Coordination Agent to run the full assembly workflow
+    # The Coordination Agent is the intelligent ADK agent.
+    # This workflow simply invokes it and waits for the result.
+    - invoke_coordination_agent:
+        try:
+          call: http.post
+          args:
+            url: ${coordination_agent_url + "/assemble"}
+            auth:
+              type: OIDC
+            body:
+              request_id: ${request_id}
+            timeout: 300
+          result: coordination_response
+        except:
+          as: e
+          steps:
+            - handle_coordination_error:
+                call: sys.log
+                args:
+                  text: ${"Coordination agent failed for request " + request_id + ": " + e.message}
+                  severity: ERROR
+            - return_error:
+                return:
+                  status: "error"
+                  request_id: ${request_id}
+                  error: ${e.message}
+
+    # 3. Check coordination result
+    - check_result:
+        switch:
+          - condition: ${coordination_response.body.status == "success"}
+            next: return_success
+          - condition: true
+            next: return_failure
+
+    # 4a. Return success with selected package
+    - return_success:
+        return:
+          status: "success"
+          request_id: ${request_id}
+          selected_package: ${coordination_response.body.selected_package}
+          explanation: ${coordination_response.body.explanation}
+
+    # 4b. Return failure
+    - return_failure:
+        return:
+          status: "failed"
+          request_id: ${request_id}
+          reason: ${coordination_response.body.reason}
