@@ -256,6 +256,226 @@ This populates the `provider_metadata` Firestore collection with all 5 providers
 
 ---
 
+---
+
+## Package Assembly Services
+
+Three services that sit between the enrichment agent and the coordination agent.
+Call order: **normalize → compose → check**
+
+---
+
+### Price Normalization (`price-normalization/`)
+
+Validates raw offers from the Provider MCP Server — filters out malformed, zero-priced, or expired offers.
+
+**Endpoint:** `POST /normalize`  
+**Port (local):** 8083
+
+**Input:**
+```json
+{
+  "offers": [
+    {
+      "offer_id": "flt_klm_BCN_2026-07-10",
+      "provider_id": "klm",
+      "offer_type": "flight",
+      "price": 234.50,
+      "currency": "EUR",
+      "tax_included": true,
+      "availability_window": {"start": "2026-07-10", "end": "2026-07-20"},
+      "quote_expiry": "2027-07-11T10:00:00+00:00",
+      "metadata": {"flight_number": "KL4821"}
+    }
+  ]
+}
+```
+
+**Output:**
+```json
+{
+  "valid_offers": [...],
+  "invalid_offers": [{"offer_id": "...", "errors": ["quote_expiry is in the past"]}],
+  "total_received": 5,
+  "total_valid": 4,
+  "total_invalid": 1
+}
+```
+
+Validation rules: offer shape must match `NormalizedOffer`, `price > 0`, `quote_expiry` not in the past.
+
+**Run locally:**
+```bash
+cd price-normalization
+pip install -r requirements.txt
+python main.py
+# http://localhost:8080
+```
+
+---
+
+### Package Composer Agent (`package-composer-agent/`)
+
+ADK agent that fetches live flight, hotel, and activity offers from the Provider MCP Server and assembles 3 candidate vacation packages (budget / balanced / premium).
+
+Reads the vacation request from Firestore by `request_id`, runs the agent, and writes results to the `package_proposals` Firestore collection.
+
+**Requires:** Provider MCP Server running.
+
+**Endpoint:** `POST /compose`
+
+**Input:**
+```json
+{"request_id": "req_abc12345"}
+```
+
+**Output:**
+```json
+{
+  "request_id": "req_abc12345",
+  "status": "proposed",
+  "packages": [
+    {
+      "package_id": "pkg_001",
+      "flight": {"..."},
+      "hotel": {"..."},
+      "activities": [{"..."}],
+      "total_price": 1129.50,
+      "rationale": "Budget-friendly option with essential activities."
+    }
+  ]
+}
+```
+
+**Environment variables:**
+
+| Variable | Local default | Production |
+|---|---|---|
+| `PROVIDER_MCP_URL` | `http://localhost:8080/mcp` | Cloud Run URL from Leon |
+| `PORT` | `8080` | Set by Cloud Run |
+
+**Run locally:**
+```bash
+cd package-composer-agent
+pip install -r requirements.txt
+PROVIDER_MCP_URL=http://localhost:8080/mcp python app.py
+# http://localhost:8080
+```
+
+---
+
+### Feasibility Check (`feasibility-check/`)
+
+Runs three deterministic checks on candidate packages: budget, flight/hotel date alignment, and activity date range. No external dependencies.
+
+**Endpoint:** `POST /check`
+
+**Input:**
+```json
+{
+  "packages": [
+    {
+      "package_id": "pkg_001",
+      "flight": {
+        "offer_id": "flt_klm_BCN_2026-07-10",
+        "price": 234.50,
+        "availability_window": {"start": "2026-07-10", "end": "2026-07-20"}
+      },
+      "hotel": {
+        "offer_id": "htl_marriott_Barcelona_2026-07-10",
+        "price": 850.00,
+        "availability_window": {"start": "2026-07-10", "end": "2026-07-20"}
+      },
+      "activities": [
+        {
+          "offer_id": "act_getyourguide_Barcelona_2026-07-10_0",
+          "price": 45.00,
+          "availability_window": {"start": "2026-07-10", "end": "2026-07-20"}
+        }
+      ],
+      "total_price": 1129.50
+    }
+  ],
+  "budget": 2000.0,
+  "travel_dates": {"start": "2026-07-10", "end": "2026-07-20"}
+}
+```
+
+**Output:**
+```json
+{
+  "results": [
+    {"package_id": "pkg_001", "feasible": true, "reasons": []},
+    {"package_id": "pkg_002", "feasible": false, "reasons": ["Total price €2150.00 exceeds budget €2000.00"]}
+  ]
+}
+```
+
+Checks per package:
+1. `total_price <= budget`
+2. Flight window overlaps hotel window
+3. Each activity window falls within `travel_dates`
+
+**Run locally:**
+```bash
+cd feasibility-check
+pip install -r requirements.txt
+python main.py
+# http://localhost:8080
+```
+
+---
+
+### For the Coordination Agent
+
+Call these three services in this order for each vacation request:
+
+| Step | Service | Endpoint | Input | Key output field |
+|---|---|---|---|---|
+| 1 | Price Normalization | `POST /normalize` | `{"offers": [...]}` | `valid_offers` |
+| 2 | Package Composer | `POST /compose` | `{"request_id": "..."}` | `packages` |
+| 3 | Feasibility Check | `POST /check` | `{"packages": [...], "budget": ..., "travel_dates": {...}}` | `results[].feasible` |
+
+Pass `valid_offers` from Step 1 into the context for Step 2 (the composer agent fetches its own offers internally, but normalization should gate what's considered valid upstream). After Step 3, only packages where `feasible: true` should be presented to the client.
+
+---
+
+### Deployment (Package Assembly Services)
+
+```bash
+# Build and push
+docker build -t us-central1-docker.pkg.dev/ada2026-assignment2/vacation-system/price-normalization:latest ./price-normalization
+docker push us-central1-docker.pkg.dev/ada2026-assignment2/vacation-system/price-normalization:latest
+
+docker build -t us-central1-docker.pkg.dev/ada2026-assignment2/vacation-system/package-composer-agent:latest ./package-composer-agent
+docker push us-central1-docker.pkg.dev/ada2026-assignment2/vacation-system/package-composer-agent:latest
+
+docker build -t us-central1-docker.pkg.dev/ada2026-assignment2/vacation-system/feasibility-check:latest ./feasibility-check
+docker push us-central1-docker.pkg.dev/ada2026-assignment2/vacation-system/feasibility-check:latest
+
+# Deploy
+gcloud run deploy price-normalization \
+  --image us-central1-docker.pkg.dev/ada2026-assignment2/vacation-system/price-normalization:latest \
+  --region us-central1 --project ada2026-assignment2 \
+  --service-account vacation-system-sa@ada2026-assignment2.iam.gserviceaccount.com \
+  --allow-unauthenticated
+
+gcloud run deploy package-composer-agent \
+  --image us-central1-docker.pkg.dev/ada2026-assignment2/vacation-system/package-composer-agent:latest \
+  --region us-central1 --project ada2026-assignment2 \
+  --service-account vacation-system-sa@ada2026-assignment2.iam.gserviceaccount.com \
+  --set-env-vars PROVIDER_MCP_URL=<provider-mcp-cloud-run-url> \
+  --allow-unauthenticated
+
+gcloud run deploy feasibility-check \
+  --image us-central1-docker.pkg.dev/ada2026-assignment2/vacation-system/feasibility-check:latest \
+  --region us-central1 --project ada2026-assignment2 \
+  --service-account vacation-system-sa@ada2026-assignment2.iam.gserviceaccount.com \
+  --allow-unauthenticated
+```
+
+---
+
 ## Deployment (Leon handles this)
 
 Each service has a `Dockerfile`. Leon's Terraform in `leon_infra/` deploys them to Cloud Run. Once deployed, Leon will share the Cloud Run URLs — replace the localhost URLs above with those.
