@@ -6,6 +6,8 @@ from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPServerPa
 
 GEMINI_API_KEY = "AIzaSyDoLIS6uLUshDTVPM-A_JTIYc7u_54gBhQ"
 os.environ.setdefault("GOOGLE_API_KEY", GEMINI_API_KEY)
+os.environ.setdefault("GOOGLE_CLOUD_PROJECT", "ada2026-assignment2")
+os.environ.setdefault("GOOGLE_CLOUD_LOCATION", "us-central1")
 
 DESTINATION_MCP_URL = os.environ.get("DESTINATION_MCP_URL", "http://localhost:8081/mcp")
 
@@ -43,7 +45,7 @@ Do not include markdown, code fences, or commentary. Only the JSON object.
 
 root_agent = LlmAgent(
     name="enrichment_agent",
-    model="gemini-2.5-flash",
+    model="gemini-2.0-flash",
     description="Enriches vague vacation requests into concrete bookable ones.",
     instruction=INSTRUCTION,
     tools=[destination_toolset],

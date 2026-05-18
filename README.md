@@ -1,14 +1,20 @@
 # ADA Assignment 2 — Multi-Agent Vacation Package System
 
-## Services in this repo (Paritosh)
+## Services in this repo
 
-| Folder | Type | Port (local) | What it does |
-|---|---|---|---|
-| `provider-mcp-server/` | FastMCP server | 8080 | Returns mock flight, hotel, activity offers |
-| `destination-mcp-server/` | FastMCP server | 8081 | Resolves vague vacation prefs to a concrete city |
-| `request-enrichment-agent/` | ADK LlmAgent + FastAPI | 8082 | Enriches vacation requests in Firestore |
-
-Other folders: `api-gateway/` (Leon), `leon_infra/` (Leon's Terraform).
+| Folder | Owner | Type | Port (local) | What it does |
+|---|---|---|---|---|
+| `provider-mcp-server/` | Paritosh | FastMCP server | 8080 | Returns mock flight, hotel, activity offers |
+| `destination-mcp-server/` | Paritosh | FastMCP server | 8081 | Resolves vague vacation prefs to a concrete city |
+| `request-enrichment-agent/` | Paritosh | ADK LlmAgent + FastAPI | 8082 | Enriches vacation requests in Firestore |
+| `price-normalization/` | Paritosh | FastAPI | 8083 | Validates and filters raw provider offers |
+| `package-composer-agent/` | Paritosh | ADK LlmAgent + FastAPI | 8084 | Assembles 3 candidate packages (budget/balanced/premium) |
+| `feasibility-check/` | Paritosh | FastAPI | 8085 | Checks budget and date alignment per package |
+| `coordination-agent/` | Noud | ADK LlmAgent + FastAPI | 8086 | Orchestrates the full assembly pipeline |
+| `vacation-requests-service/` | Noud | FastAPI | 8003 | Accepts vacation requests, writes to Firestore, fires Pub/Sub |
+| `preference-validator/` | Noud | Cloud Function | — | Validates requests triggered by Pub/Sub |
+| `api-gateway/` | Leon | FastAPI | — | Public entry point, JWT auth, rate limiting |
+| `leon_infra/` | Leon | Terraform | — | GCP infrastructure (Cloud Run, Pub/Sub, Firestore) |
 
 ---
 
@@ -25,11 +31,27 @@ cd ada-assignment2
 python3.12 -m venv .venv
 source .venv/bin/activate
 
-# Install deps for all three services
 pip install -r provider-mcp-server/requirements.txt
 pip install -r destination-mcp-server/requirements.txt
 pip install -r request-enrichment-agent/requirements.txt
+pip install -r price-normalization/requirements.txt
+pip install -r package-composer-agent/requirements.txt
+pip install -r feasibility-check/requirements.txt
+pip install -r coordination-agent/requirements.txt
 ```
+
+### GCP setup (do this once)
+
+```bash
+gcloud auth application-default login
+gcloud config set project ada2026-assignment2
+
+# Create the Firestore database if it doesn't exist yet
+gcloud firestore databases create --location=us-central1 --project=ada2026-assignment2
+```
+
+Billing must be enabled on the project for Vertex AI (used by all LLM agents):
+`https://console.developers.google.com/billing/enable?project=ada2026-assignment2`
 
 ---
 
@@ -95,6 +117,86 @@ Health check:
 ```bash
 curl http://localhost:8082/healthz
 ```
+
+---
+
+## Running the full pipeline locally (Noud's services)
+
+To run the end-to-end pipeline locally you need 8 terminals. Activate the venv first in each: `source .venv/bin/activate`
+
+### Port map
+
+| Terminal | Service | Command |
+|---|---|---|
+| 1 | Provider MCP | `cd provider-mcp-server && python server.py` |
+| 2 | Destination MCP | `cd destination-mcp-server && python server.py` |
+| 3 | Enrichment agent | `cd request-enrichment-agent && DESTINATION_MCP_URL=http://localhost:8081/mcp PORT=8082 python app.py` |
+| 4 | Price normalization | `cd price-normalization && PORT=8083 python main.py` |
+| 5 | Package composer | `cd package-composer-agent && PROVIDER_MCP_URL=http://localhost:8080/mcp PORT=8084 python app.py` |
+| 6 | Feasibility check | `cd feasibility-check && PORT=8085 python main.py` |
+| 7 | Coordination agent | see below |
+| 8 | Vacation requests | `cd vacation-requests-service && uvicorn mail:app --host 0.0.0.0 --port 8003` |
+
+### 7. Coordination Agent (port 8086)
+
+Needs all other services running first.
+
+```bash
+cd coordination-agent
+ENRICHMENT_URL=http://localhost:8082 \
+NORMALIZATION_URL=http://localhost:8083 \
+COMPOSER_URL=http://localhost:8084 \
+FEASIBILITY_URL=http://localhost:8085 \
+PROVIDER_MCP_URL=http://localhost:8080/mcp \
+PORT=8086 \
+python app.py
+```
+
+Health check:
+```bash
+curl http://localhost:8086/healthz
+```
+
+### End-to-end test
+
+**Step 1 — Create a vacation request:**
+```bash
+curl -X POST http://localhost:8003/requests \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_preferences": "warm beach holiday",
+    "vacation_type": "beach",
+    "travel_dates": "2026-07-10 to 2026-07-20",
+    "budget": 2000,
+    "weather_preference": "warm"
+  }'
+# Returns: {"status": "submitted", "request_id": "req_<id>"}
+```
+
+**Step 2 — Trigger the coordination agent** (replace `req_<id>` with the returned value):
+```bash
+curl -X POST http://localhost:8086/assemble \
+  -H "Content-Type: application/json" \
+  -d '{"request_id": "req_<id>"}'
+```
+
+The agent runs the full pipeline: Enrich → Fetch offers → Normalize → Compose → Feasibility → Score → Rules → Select.
+Every step is logged to the `coordination_event_log` Firestore collection.
+The final selected package is written back to the `vacation_requests` Firestore document.
+
+### Environment variables for the Coordination Agent
+
+| Variable | Default | Description |
+|---|---|---|
+| `ENRICHMENT_URL` | `http://localhost:8082` | Request Enrichment Agent |
+| `NORMALIZATION_URL` | `http://localhost:8083` | Price Normalization Service |
+| `COMPOSER_URL` | `http://localhost:8084` | Package Composer Agent |
+| `FEASIBILITY_URL` | `http://localhost:8085` | Feasibility Check Service |
+| `PROVIDER_MCP_URL` | `http://localhost:8080/mcp` | Provider MCP Server |
+| `SCORING_URL` | _(empty)_ | Package Scoring Service (skipped if not set) |
+| `BUSINESS_RULES_URL` | _(empty)_ | Business Rules Service (skipped if not set) |
+| `PACKAGE_SELECTION_URL` | _(empty)_ | Package Selection Function (inline fallback if not set) |
+| `PORT` | `8080` | HTTP port (set to 8086 locally to avoid conflict with Provider MCP) |
 
 ---
 
