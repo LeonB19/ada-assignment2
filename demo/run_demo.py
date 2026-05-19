@@ -49,19 +49,14 @@ def run_demo(gateway_url: str):
         return
     section("Step 2 — Submit vacation request")
     request_body = {
-        "vacation_type": "beach holiday",
-        "destination": None,          
-        "origin": "Amsterdam",
-        "travel_mode": "flight",
-        "vacation_purpose": "relaxation",
-        "weather_preference": "warm",
-        "travel_dates": {
-            "departure": "2025-07-10",
-            "return":    "2025-07-20",
-        },
-        "num_adults": 2,
-        "num_children": 0,
-        "budget_eur": 2000,
+    "client_preferences": "beach holiday, warm weather, relaxation, 2 adults, flying from Amsterdam",
+    "destination": None,
+    "vacation_type": "beach holiday",
+    "travel_dates": "2025-07-10 to 2025-07-20",
+    "travel_mode": "flight",
+    "vacation_purpose": "relaxation",
+    "weather_preference": "warm",
+    "budget": 2000,
     }
     info(f"Request payload:\n{json.dumps(request_body, indent=4)}")
  
