@@ -29,7 +29,7 @@ main:
             - handle_coordination_error:
                 call: sys.log
                 args:
-                  text: ${"Coordination agent failed for request " + request_id + ": " + e.message}
+                  text: ${"Coordination agent failed for request " + request_id + " - " + e.message}
                   severity: ERROR
             - return_error:
                 return:
