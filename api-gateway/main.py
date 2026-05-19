@@ -21,7 +21,7 @@ PROJECT_ID =                    os.getenv("PROJECT_ID", "ada2026-assignment2")
 RATE_LIMIT_REQUESTS = 30
 RATE_LIMIT_WINDOW   = 60
 
-request_counts = dict[str, list[float]] = defaultdict(list)
+request_counts: dict[str, list[float]] = defaultdict(list)
 
 def rate_limit_check(request: Request):
     ip = request.client.host
