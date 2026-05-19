@@ -141,6 +141,6 @@ resource "google_workflows_workflow" "package_assembly" {
   name            = "vacation-package-assembly"
   region          = var.region
   service_account = google_service_account.runtime_sa.email
-  source_contents = file("${path.module}/../workflow/workflow.yaml")
+  source_contents = file("${path.module}/../workflow.yaml")
   depends_on      = [google_project_service.apis]
 }
