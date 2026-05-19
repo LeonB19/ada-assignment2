@@ -1,8 +1,3 @@
-output "api_gateway_url" {
-  description = "Public URL of the API Gateway"
-  value       = google_cloud_run_v2_service.api_gateway.uri
-}
-
 output "artifact_registry_repo" {
   description = "Docker image base path"
   value       = "${var.region}-docker.pkg.dev/${var.project_id}/vacation-system"
