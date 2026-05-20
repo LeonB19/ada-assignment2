@@ -4,7 +4,7 @@ from google.adk.agents import LlmAgent
 from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset
 from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPServerParams
 
-GEMINI_API_KEY = "AIzaSyDoLIS6uLUshDTVPM-A_JTIYc7u_54gBhQ"
+GEMINI_API_KEY = "AIzaSyBUDhiTTzgDoX4WSx2ZmBWyBkCcu1o"
 os.environ.setdefault("GOOGLE_API_KEY", GEMINI_API_KEY)
 os.environ.setdefault("GOOGLE_CLOUD_PROJECT", "ada2026-assignment2")
 os.environ.setdefault("GOOGLE_CLOUD_LOCATION", "us-central1")
@@ -45,7 +45,7 @@ Do not include markdown, code fences, or commentary. Only the JSON object.
 
 root_agent = LlmAgent(
     name="enrichment_agent",
-    model="gemini-2.0-flash",
+    model="gemini-2.5-flash",
     description="Enriches vague vacation requests into concrete bookable ones.",
     instruction=INSTRUCTION,
     tools=[destination_toolset],
