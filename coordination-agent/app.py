@@ -42,7 +42,8 @@ async def _run_pipeline(request_id: str) -> dict:
         new_message=user_message,
     ):
         if event.is_final_response():
-            final_response = event.content.parts[0].text
+            if event.content and event.content.parts and event.content.parts[0].text:
+                final_response = event.content.parts[0].text
 
     if not final_response:
         return {"status": "error", "request_id": request_id, "reason": "Agent returned no response"}
