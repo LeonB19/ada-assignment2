@@ -41,9 +41,15 @@ async def _run_pipeline(request_id: str) -> dict:
         session_id=session.id,
         new_message=user_message,
     ):
+        logger.info(f"Event: is_final={event.is_final_response()}, has_content={event.content is not None}")
         if event.is_final_response():
-            if event.content and event.content.parts and event.content.parts[0].text:
-                final_response = event.content.parts[0].text
+            logger.info(f"Final event content: {event.content}")
+            if event.content and event.content.parts:
+                for part in event.content.parts:
+                    logger.info(f"Part: text={part.text[:100] if part.text else None}")
+                    if part.text:
+                        final_response = part.text
+                        break
 
     if not final_response:
         return {"status": "error", "request_id": request_id, "reason": "Agent returned no response"}
@@ -51,6 +57,12 @@ async def _run_pipeline(request_id: str) -> dict:
     text = final_response.strip()
     if text.startswith("```"):
         text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        logger.error(f"Agent returned non-JSON for {request_id}: {text[:200]}")
+        return {"status": "error", "request_id": request_id, "reason": "Agent returned malformed JSON"}
 
     try:
         return json.loads(text)
