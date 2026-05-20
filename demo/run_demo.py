@@ -189,20 +189,6 @@ def run_demo(gateway_url: str, coord_url: str):
     info(f"  Activity: {activity.get('metadata', {}).get('activity_name', 'N/A')} — "
          f"€{activity.get('price', 'N/A')}")
 
-    # ── Step 5 ─────────────────────────────────────────────────────────────────
-    section("Step 5 — Business rules active during assembly")
-    agency_headers = {"Authorization": "Bearer agency-demo-user"}
-    resp = client.get(f"{gateway_url}/agency/rules", headers=agency_headers)
-    if resp.status_code == 200:
-        rules = resp.json().get("rules", [])
-        if rules:
-            for rule in rules:
-                ok(f"Rule: {rule.get('description', rule)}")
-        else:
-            warn("No rules configured")
-    else:
-        warn(f"Could not fetch rules: {resp.status_code}")
-
     section("Demo complete")
     ok("Full end-to-end scenario ran successfully")
     ok(f"Request ID for audit: {request_id}")
