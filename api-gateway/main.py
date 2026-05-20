@@ -77,6 +77,7 @@ async def root():
             "POST /requests":                 "Submit a vacation request (client)",
             "GET  /requests/{id}":            "Get a vacation request (client)",
             "GET  /requests":                 "List vacation requests (client)",
+            "GET  /events/{id}":              "Get coordination events for a request",
             "POST /agency/rules":             "Add a business rule (agency)",
             "GET  /agency/rules":             "List business rules (agency)",
             "POST /agency/rules/{id}/delete": "Delete a business rule (agency)",
@@ -135,6 +136,24 @@ async def list_requests(
     except httpx.RequestError as e:
         raise HTTPException(status_code=503, detail=f"Vacation Request Service unavailable: {e}")
     return resp.json()
+
+@app.get("/events/{request_id}")
+async def get_events(
+    request_id: str,
+    request: Request,
+    user: dict = Depends(verify_jwt),
+    _rl: None = Depends(rate_limit_check),
+):
+    logger.info(f"Routing GET /events/{request_id}")
+    try:
+        resp = await http_client.get(f"{VACATION_REQUEST_URL}/events/{request_id}")
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=e.response.text)
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=503, detail=f"Vacation Request Service unavailable: {e}")
+    return resp.json()
+
 
 @app.post("/agency/rules", status_code=201)
 async def add_rule(
