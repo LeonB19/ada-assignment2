@@ -1,5 +1,7 @@
-import os
+import asyncio
 import json
+import logging
+import os
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -10,6 +12,9 @@ from google.cloud import firestore
 
 from enrichment_agent.agent import root_agent
 from firestore_client import get_vacation_request, update_vacation_request
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Request Enrichment Agent", version="1.0.0")
 
@@ -51,20 +56,37 @@ async def enrich(payload: EnrichRequestInput):
         parts=[types.Part(text=json.dumps(input_data))],
     )
 
-    # 3. Create a fresh session and run the agent
-    session = await session_service.create_session(
-        app_name="enrichment-agent",
-        user_id="system",
-    )
-
+    # 3. Create a fresh session and run the agent (with retry on Gemini 503)
+    _RETRYABLE = ("503", "UNAVAILABLE", "ResourceExhausted")
+    max_retries = 5
     final_response = None
-    async for event in runner.run_async(
-        user_id="system",
-        session_id=session.id,
-        new_message=user_message,
-    ):
-        if event.is_final_response():
-            final_response = event.content.parts[0].text
+
+    for attempt in range(max_retries + 1):
+        try:
+            session = await session_service.create_session(
+                app_name="enrichment-agent",
+                user_id="system",
+            )
+            final_response = None
+            async for event in runner.run_async(
+                user_id="system",
+                session_id=session.id,
+                new_message=user_message,
+            ):
+                if event.is_final_response():
+                    if event.content and event.content.parts:
+                        final_response = event.content.parts[0].text
+            break  # success
+        except Exception as e:
+            if attempt < max_retries and any(k in str(e) for k in _RETRYABLE):
+                wait = (attempt + 1) * 10
+                logger.warning(
+                    f"Gemini transient error (attempt {attempt + 1}/{max_retries}), "
+                    f"retrying in {wait}s: {e}"
+                )
+                await asyncio.sleep(wait)
+            else:
+                raise
 
     if not final_response:
         raise HTTPException(status_code=500, detail="Agent returned no response")

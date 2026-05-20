@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 import logging
@@ -26,30 +27,47 @@ runner = Runner(
 
 async def _run_pipeline(request_id: str) -> dict:
     """Run the coordination agent for a single request_id and return the parsed result."""
-    session = await session_service.create_session(
-        app_name="coordination-agent",
-        user_id="system",
-    )
     user_message = types.Content(
         role="user",
         parts=[types.Part(text=json.dumps({"request_id": request_id}))],
     )
 
+    _RETRYABLE = ("503", "UNAVAILABLE", "ResourceExhausted")
+    max_retries = 5
     final_response = None
-    async for event in runner.run_async(
-        user_id="system",
-        session_id=session.id,
-        new_message=user_message,
-    ):
-        logger.info(f"Event: is_final={event.is_final_response()}, has_content={event.content is not None}")
-        if event.is_final_response():
-            logger.info(f"Final event content: {event.content}")
-            if event.content and event.content.parts:
-                for part in event.content.parts:
-                    logger.info(f"Part: text={part.text[:100] if part.text else None}")
-                    if part.text:
-                        final_response = part.text
-                        break
+
+    for attempt in range(max_retries + 1):
+        try:
+            session = await session_service.create_session(
+                app_name="coordination-agent",
+                user_id="system",
+            )
+            final_response = None
+            async for event in runner.run_async(
+                user_id="system",
+                session_id=session.id,
+                new_message=user_message,
+            ):
+                logger.info(f"Event: is_final={event.is_final_response()}, has_content={event.content is not None}")
+                if event.is_final_response():
+                    logger.info(f"Final event content: {event.content}")
+                    if event.content and event.content.parts:
+                        for part in event.content.parts:
+                            logger.info(f"Part: text={part.text[:100] if part.text else None}")
+                            if part.text:
+                                final_response = part.text
+                                break
+            break  # success
+        except Exception as e:
+            if attempt < max_retries and any(k in str(e) for k in _RETRYABLE):
+                wait = (attempt + 1) * 10
+                logger.warning(
+                    f"Gemini transient error (attempt {attempt + 1}/{max_retries}), "
+                    f"retrying in {wait}s: {e}"
+                )
+                await asyncio.sleep(wait)
+            else:
+                raise
 
     if not final_response:
         return {"status": "error", "request_id": request_id, "reason": "Agent returned no response"}
@@ -57,12 +75,6 @@ async def _run_pipeline(request_id: str) -> dict:
     text = final_response.strip()
     if text.startswith("```"):
         text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        logger.error(f"Agent returned non-JSON for {request_id}: {text[:200]}")
-        return {"status": "error", "request_id": request_id, "reason": "Agent returned malformed JSON"}
 
     try:
         return json.loads(text)
