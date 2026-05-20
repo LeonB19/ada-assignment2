@@ -2,7 +2,7 @@ import json
 import urllib.request
 import urllib.error
 
-GEMINI_API_KEY = "AIzaSyDoLIS6uLUshDTVPM-A_JTIYc7u_54gBhQ"
+GEMINI_API_KEY = "AIzaSyBUDhiTTzgDoX4WSx2ZmBWyBkCcu1o"
 GEMINI_API_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
     "gemini-2.5-flash:generateContent"
