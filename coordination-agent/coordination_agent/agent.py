@@ -5,7 +5,7 @@ from google.adk.agents import LlmAgent
 from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset
 from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPServerParams
 
-GEMINI_API_KEY = "AIzaSyDoLIS6uLUshDTVPM-A_JTIYc7u_54gBhQ"
+GEMINI_API_KEY = "AIzaSyBUDhiTTzgDoX4WSx2ZmBWyBkCcu1o-SD0"
 os.environ.setdefault("GOOGLE_API_KEY", GEMINI_API_KEY)
 os.environ.setdefault("GOOGLE_CLOUD_PROJECT", "ada2026-assignment2")
 os.environ.setdefault("GOOGLE_CLOUD_LOCATION", "us-central1")
