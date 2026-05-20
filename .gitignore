@@ -103,15 +103,6 @@ alembic/versions/*.pyc
 .coverage
 htmlcov/
 
-claude_docs/
-docs/
-# Keep .claude/ (CLAUDE.md, skills) but ignore memory and local settings
-.claude/settings.local.json
-.claude/projects/
-.claude/
-CLAUDE.md
-production_dev_spec.md
-
 # JWT key files (never commit private keys)
 *.pem
 jwt_private.pem
