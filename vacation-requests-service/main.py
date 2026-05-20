@@ -152,3 +152,29 @@ def list_requests():
     db = get_db()
     docs = db.collection("vacation_requests").stream()
     return [doc.to_dict() for doc in docs]
+
+
+@app.get("/events/{request_id}")
+def get_events(request_id: str):
+    """Returns the last 20 coordination_event_log entries for a request, ordered by timestamp."""
+    db = get_db()
+    docs = (
+        db.collection("coordination_event_log")
+        .where("request_id", "==", request_id)
+        .order_by("timestamp")
+        .limit(20)
+        .stream()
+    )
+    events = []
+    for doc in docs:
+        d = doc.to_dict()
+        ts = d.get("timestamp")
+        events.append({
+            "event_id":   doc.id,
+            "event_type": d.get("event_type"),
+            "request_id": d.get("request_id"),
+            "timestamp":  ts.isoformat() if ts else None,
+            "source":     d.get("source"),
+            "payload":    d.get("payload", {}),
+        })
+    return {"events": events}

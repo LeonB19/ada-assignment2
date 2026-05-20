@@ -13,6 +13,7 @@ The script walks through the full scenario from the assignment plan:
 
 import argparse
 import json
+import os
 import time
 import httpx
 
@@ -33,6 +34,42 @@ def ok(msg: str):   print(f"  {GREEN}✓{RESET} {msg}")
 def warn(msg: str): print(f"  {YELLOW}!{RESET} {msg}")
 def err(msg: str):  print(f"  {RED}✗{RESET} {msg}")
 def info(msg: str): print(f"    {msg}")
+
+def _progress_label(data: dict) -> str:
+    status = data.get("coordination_status") or data.get("status", "")
+    if status == "completed" or data.get("selected_package"):
+        return f"  ✅ Package selected!"
+    if status in ("composing", "scoring", "selecting", "enriching"):
+        return f"  ✈️  Fetching provider offers..."
+    if data.get("enriched_destination"):
+        return f"  🗺️  Destination resolved: {data['enriched_destination']}"
+    return "  ⏳ Validating preferences..."
+
+
+def _event_description(event_type: str, payload: dict) -> str:
+    dest = payload.get("enriched_destination", "")
+    descriptions = {
+        "PIPELINE_STARTED":      "Pipeline initiated",
+        "ENRICHMENT_COMPLETED":  f"Resolved destination to {dest}" if dest else "Destination enriched",
+        "ENRICHMENT_FAILED":     f"Enrichment failed: {payload.get('error', '')}",
+        "OFFERS_NORMALIZED":     f"{payload.get('total_valid', '?')} offers normalised",
+        "NORMALIZATION_FAILED":  f"Normalisation failed: {payload.get('error', '')}",
+        "PACKAGES_COMPOSED":     f"{payload.get('package_count', '?')} packages assembled",
+        "COMPOSITION_FAILED":    f"Composition failed: {payload.get('error', '')}",
+        "FEASIBILITY_CHECKED":   f"{payload.get('feasible_count', '?')} feasible packages",
+        "FEASIBILITY_FAILED":    f"Feasibility check failed: {payload.get('error', '')}",
+        "PACKAGES_SCORED":       f"{payload.get('package_count', '?')} packages scored, top score {payload.get('top_score', '?')}",
+        "SCORING_FAILED":        f"Scoring failed: {payload.get('error', '')}",
+        "SCORING_SKIPPED":       f"Scoring skipped: {payload.get('reason', '')}",
+        "RULES_APPLIED":         f"{payload.get('rules_applied', [])} rules applied",
+        "RULES_FAILED":          f"Rules failed: {payload.get('error', '')}",
+        "RULES_SKIPPED":         f"Rules skipped: {payload.get('reason', '')}",
+        "PACKAGE_SELECTED":      f"{payload.get('selected_package_id', '?')} selected (€{payload.get('total_price', 0):.2f})",
+        "PIPELINE_COMPLETED":    "Pipeline completed",
+        "PIPELINE_FAILED":       f"Pipeline failed: {payload.get('notes', '')}",
+    }
+    return descriptions.get(event_type, event_type.replace("_", " ").title())
+
 
 def run_demo(gateway_url: str):
     gateway_url = gateway_url.rstrip("/")
@@ -71,27 +108,43 @@ def run_demo(gateway_url: str):
  
     section("Step 3 — Polling for package assembly result")
     max_polls = 20
-    poll_interval = 5  # seconds
- 
+    poll_interval = 10  # seconds
+    seen_event_ids: set[str] = set()
+
     for i in range(max_polls):
         time.sleep(poll_interval)
         resp = client.get(f"{gateway_url}/requests/{request_id}", headers=headers)
         if resp.status_code != 200:
             warn(f"Poll {i+1}: unexpected status {resp.status_code}")
             continue
- 
+
         data = resp.json()
-        status = data.get("status", "unknown")
+        status = data.get("coordination_status") or data.get("status", "unknown")
         info(f"Poll {i+1}/{max_polls} — status: {status}")
- 
-        if status == "completed":
+        info(_progress_label(data))
+
+        # Print new coordination events
+        try:
+            ev_resp = client.get(f"{gateway_url}/events/{request_id}", headers=headers)
+            if ev_resp.status_code == 200:
+                for event in ev_resp.json().get("events", []):
+                    eid = event.get("event_id", "")
+                    if eid in seen_event_ids:
+                        continue
+                    seen_event_ids.add(eid)
+                    ts = event.get("timestamp") or ""
+                    time_part = ts[11:19] if len(ts) >= 19 else "??:??:??"
+                    desc = _event_description(event.get("event_type", ""), event.get("payload", {}))
+                    info(f"  {CYAN}[{time_part}]{RESET} {event.get('event_type', '')} — {desc}")
+        except Exception as e:
+            warn(f"Could not fetch events: {e}")
+
+        if status == "completed" or data.get("selected_package"):
             ok("Package assembly completed!")
             break
         elif status == "failed":
             err(f"Assembly failed: {data.get('error', 'unknown error')}")
             return
-        elif status in ("submitted", "validating", "enriching", "composing", "scoring", "selecting"):
-            info(f"  Still processing… ({status})")
     else:
         warn("Timed out waiting for result — check Firestore and Cloud Logging")
         return
