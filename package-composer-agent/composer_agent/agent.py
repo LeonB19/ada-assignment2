@@ -48,7 +48,7 @@ If fewer than 3 distinct combinations are possible, return as many as you can.
 
 root_agent = LlmAgent(
     name="composer_agent",
-    model="gemini-2.5-flash-lite",
+    model="gemini-2.5-flash",
     description="Composes candidate vacation packages by fetching and combining flight, hotel, and activity offers.",
     instruction=INSTRUCTION,
     tools=[provider_toolset],
