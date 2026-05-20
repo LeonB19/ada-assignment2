@@ -43,7 +43,7 @@ Do not include markdown, code fences, or commentary. Only the JSON object.
 
 root_agent = LlmAgent(
     name="enrichment_agent",
-    model="gemini-2.5-flash",
+    model="gemini-2.5-flash-lite",
     description="Enriches vague vacation requests into concrete bookable ones.",
     instruction=INSTRUCTION,
     tools=[destination_toolset],

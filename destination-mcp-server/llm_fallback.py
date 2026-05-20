@@ -5,7 +5,7 @@ import urllib.error
 GEMINI_API_KEY = "AIzaSyBUDhiTTzgDoX4WSx2ZmBWyBkCcu1o"
 GEMINI_API_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
-    "gemini-2.5-flash:generateContent"
+    "gemini-2.5-flash-lite:generateContent"
 )
 
 
