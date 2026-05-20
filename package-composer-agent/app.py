@@ -31,15 +31,8 @@ class ComposeRequestInput(BaseModel):
 
 
 def _parse_travel_dates(travel_dates) -> tuple[str, str]:
-    """Parse travel_dates into (start_date, end_date).
-
-    Handles two formats:
-      - string: "2026-07-10 to 2026-07-20"
-      - dict:   {"departure": "2026-07-10", "return": "2026-07-20"}
-    """
     if isinstance(travel_dates, dict):
         return travel_dates["departure"], travel_dates["return"]
-    # string format: "YYYY-MM-DD to YYYY-MM-DD"
     parts = str(travel_dates).split(" to ")
     return parts[0].strip(), parts[1].strip()
 
@@ -57,7 +50,7 @@ async def compose(payload: ComposeRequestInput):
         raise HTTPException(status_code=422, detail="travel_dates missing from request")
     start_date, end_date = _parse_travel_dates(travel_dates)
 
-    # 3. Build input for the agent — use enriched_destination if available
+    # 3. Build input for the agent
     input_data = {
         "destination": request.get("enriched_destination") or request.get("destination"),
         "start_date": start_date,
@@ -74,7 +67,7 @@ async def compose(payload: ComposeRequestInput):
         parts=[types.Part(text=json.dumps(input_data))],
     )
 
-    # 4. Create a fresh session and run the agent (with retry on Gemini 503)
+    # 4. Run agent with retry
     _RETRYABLE = ("503", "UNAVAILABLE", "ResourceExhausted")
     max_retries = 5
     final_response = None
@@ -92,9 +85,19 @@ async def compose(payload: ComposeRequestInput):
                 new_message=user_message,
             ):
                 if event.is_final_response():
+                    logger.info(f"Final event content: {event.content}")
                     if event.content and event.content.parts:
-                        final_response = event.content.parts[0].text
-            break  # success
+                        for part in event.content.parts:
+                            if part.text:
+                                final_response = part.text
+                                break
+            if final_response:
+                break  # success
+            # If no final response but no exception, retry
+            if attempt < max_retries:
+                wait = (attempt + 1) * 10
+                logger.warning(f"No response from agent (attempt {attempt + 1}/{max_retries}), retrying in {wait}s")
+                await asyncio.sleep(wait)
         except Exception as e:
             if attempt < max_retries and any(k in str(e) for k in _RETRYABLE):
                 wait = (attempt + 1) * 10
@@ -109,13 +112,18 @@ async def compose(payload: ComposeRequestInput):
     if not final_response:
         raise HTTPException(status_code=500, detail="Agent returned no response")
 
-    # 5. Strip markdown fences defensively and parse JSON
+    # 5. Strip markdown fences and parse JSON
     text = final_response.strip()
     if text.startswith("```"):
         text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-    packages = json.loads(text)
 
-    # 6. Save to Firestore package_proposals collection
+    try:
+        packages = json.loads(text)
+    except json.JSONDecodeError:
+        logger.error(f"Agent returned non-JSON: {text[:300]}")
+        raise HTTPException(status_code=500, detail=f"Agent returned malformed JSON: {text[:200]}")
+
+    # 6. Save to Firestore
     save_package_proposal(payload.request_id, {
         "request_id": payload.request_id,
         "packages": packages,
