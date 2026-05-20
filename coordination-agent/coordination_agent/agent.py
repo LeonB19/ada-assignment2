@@ -450,7 +450,7 @@ Return ONLY this JSON (no markdown, no code fences, no extra text):
 
 root_agent = LlmAgent(
     name="coordination_agent",
-    model="gemini-2.0-flash-lite",
+    model="gemini-2.5-flash",
     description="Orchestrates the full vacation package assembly pipeline.",
     instruction=INSTRUCTION,
     tools=[
